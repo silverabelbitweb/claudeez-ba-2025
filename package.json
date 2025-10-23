@@ -1,0 +1,10 @@
+{
+    "scripts": {
+        "doinstall": "npm install"
+        , "claudeez": "dotenv -- claude"
+    },
+    "devDependencies": {
+        "@anthropic-ai/claude-code": "2",
+        "dotenv-cli": "10"
+    }
+}
