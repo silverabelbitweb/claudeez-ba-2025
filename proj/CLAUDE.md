@@ -4,50 +4,75 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This appears to be a Java Spring Boot application from the BalticAgro company domain, specifically dealing with location management and distance calculations. The codebase uses Spring Data JPA with Hibernate and implements complex database queries using the JPA Criteria API.
+Java Spring Boot application for location management and distance calculations. Uses Spring Data JPA with Hibernate, PostgreSQL-specific features, and a custom `QueryService` abstraction for building complex JPA Criteria queries.
 
-## Code Architecture
+**Tech Stack**: Spring Boot, JPA/Hibernate, PostgreSQL, Lombok
 
-### Query Pattern
-The application uses a custom `QueryService` abstraction layer that wraps JPA Criteria API queries. This pattern is evident in `FeatureGetLocationsDistances.java`:
+## Architecture
 
-- **Context-based query building**: Queries are built using `QueryService.Context<T, R>` which provides methods like `arrayAgg()`, `predicateBuilder()`, and `orderBy2()`
-- **Complex joins with predicates**: The code uses custom `joinOn()` methods to create joins with ON clause predicates
-- **Array aggregation**: PostgreSQL-specific array aggregation functions are used extensively for collecting related data (e.g., `array_agg()` for collecting distance information)
-- **SelectionWrapper pattern**: Results are mapped to DTOs using `QueryService.SelectionWrapper<Output, ?>` which pairs JPA expressions with setter methods
+### QueryService Pattern
+
+Custom abstraction wrapping JPA Criteria API (`FeatureGetLocationsDistances.java`):
+
+- `QueryService.Context<T, R>` - Provides `arrayAgg()`, `predicateBuilder()`, `orderBy2()`
+- `SelectionWrapper<Output, ?>` - Maps JPA expressions to DTO setters
+- `joinOn()` - Custom joins with ON clause predicates
+- PostgreSQL `array_agg()` for aggregating related data in single queries
 
 ### Domain Model
-Based on the visible entities:
-- **Location**: Core entity with addresses, companies, and bidirectional distance relationships
-- **Company**: Has locations, customer managers, and contract status
-- **Distance**: Represents distances between locations (fromLocation → toLocation)
-- **Address**: Geographical address information
-- **Classificator**: Used for status codes and other enumerated values
+
+- **Location** ↔ **Distance** (bidirectional: fromDistances/toDistances)
+- **Location** → **Address**, **Company**
+- **Company** → **Representative** (customer managers)
+- **Classificator** - Status codes and enumerations
 
 ### Key Patterns
 
-1. **Bidirectional Distance Relationships**: Distances are tracked in both directions (fromDistances and toDistances), requiring joins on both `Location_.fromDistances` and `Location_.toDistances`
+- **Bidirectional Distance Joins**: Join on both `Location_.fromDistances` and `Location_.toDistances`
+- **Problem Detection**: Business logic detects missing data (contracts without distances, crop locations without distances)
+- **Dynamic Filtering**: `MultiValueMap<String, String>` search parameters with predicate builders
+- **Array Aggregations**: Collect related data (distances, names) into PostgreSQL arrays, transform to DTOs
 
-2. **Problem Detection**: The service includes business logic to detect data quality issues:
-   - Active contracts without crop locations
-   - Active contracts without distance data
-   - Crop locations without distance data
+## Performance Considerations
 
-3. **Dynamic Filtering**: Uses Spring's `MultiValueMap<String, String>` for flexible search parameters with predicate builders
+### Known Bottlenecks
 
-4. **Array Aggregation for Related Data**: Instead of separate queries, the code aggregates related data into PostgreSQL arrays in a single query, then transforms them into DTOs
+**Pagination happens AFTER expensive operations:**
+- 6+ `array_agg()` functions + complex joins execute on entire filtered dataset
+- Then `OFFSET/FETCH FIRST` applies (computing thousands of rows to show 20-50)
+- See `scratch_85.sql` line 97 - pagination is last step
 
-## SQL Query Characteristics
+**External service blocking query:**
+- `FeatureGetLocationsDistances:54` - `contractExternalService.getCompaniesWithActiveContracts()`
+- Called synchronously on every request
+- **Fix**: Cache with Redis/Caffeine (5-15 min TTL)
 
-The generated SQL queries (see `scratch_85.sql`) feature:
-- Extensive use of LEFT JOINs for optional relationships
-- Array aggregation with filters (`array_agg(...) filter (where ... is not null)`)
-- GROUP BY with complex HAVING clauses for post-aggregation filtering
-- Large IN clauses (suggesting batch operations or active contract checking)
+**HAVING filters should be WHERE/JOIN ON:**
+- Lines 133-136: `distances` and `problem` filters in HAVING clause
+- Computed after aggregation instead of before
+- Move to LEFT JOIN ON clauses to reduce aggregated rows
 
-## Java-Specific Notes
+### Required Indexes
 
-- **Package structure**: `ee.balticagro.company.domain.location`
-- **Lombok**: Heavy use of Lombok annotations (@Getter, @Setter, @RequiredArgsConstructor, @Slf4j)
-- **JPA Metamodel**: Uses JPA metamodel classes (e.g., `Location_`, `Company_`) for type-safe queries
-- **Hibernate-specific features**: Uses `JpaExpression` and `JpaOrder` for advanced Hibernate features like null precedence control
+```sql
+CREATE INDEX idx_location_status ON locations(status);
+CREATE INDEX idx_company_status ON companies(status);
+CREATE INDEX idx_distance_from_to ON distance(from_location_id, to_location_id);
+CREATE INDEX idx_distance_to_from ON distance(to_location_id, from_location_id);
+CREATE INDEX idx_location_company ON locations(company_id, status);
+CREATE INDEX idx_location_crop ON locations(is_crop_location, status);
+```
+
+### Optimization Patterns
+
+1. **Cache external dependencies** - Especially if used in WHERE/HAVING
+2. **Push filters down** - HAVING → WHERE or JOIN ON when possible
+3. **Two-query pattern** - Fetch IDs (paginated), then details for page items only
+4. **Limit aggregations** - Only aggregate displayed/filtered data
+5. **Keyset pagination** - Replace `OFFSET` with `WHERE id > ?` for large datasets
+
+### QueryService Warnings
+
+- Abstraction hides performance issues - monitor generated SQL
+- `arrayAgg()` is expensive on large result sets
+- GROUP BY includes all selected columns (59 columns in current query)
