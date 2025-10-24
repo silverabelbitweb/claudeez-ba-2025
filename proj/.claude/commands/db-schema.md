@@ -16,8 +16,8 @@ You are tasked with analyzing a PostgreSQL database schema. Follow these steps:
      - Output format preference: "SQL DDL" or "Detailed Analysis Report"
 
 2. **Test Connection**
-   - First, test if `psql` is available on the system
-   - Test database connectivity with provided credentials
+   - Use Docker container with `alpine/psql` image to run PostgreSQL commands
+   - Test database connectivity with provided credentials using Docker
 
 3. **Extract Schema Information**
 
@@ -56,10 +56,24 @@ You are tasked with analyzing a PostgreSQL database schema. Follow these steps:
 - Use `PGPASSWORD` environment variable for psql/pg_dump
 - Remind user not to commit files with sensitive connection strings
 
-## Example pg_dump Command
+## Docker Commands
 
+All PostgreSQL commands should be executed using Docker containers with the `alpine/psql` image.
+
+**Connection Test:**
 ```bash
-PGPASSWORD='password' pg_dump -h host -p port -U username -d database --schema-only --no-owner --no-privileges
+PGPASSWORD='password' docker run --net=host -e PGPASSWORD='password' --rm alpine/psql -h localhost -p 5433 -U postgres -d database -c "SELECT version();"
+```
+
+**Schema Dump (SQL DDL):**
+```bash
+PGPASSWORD='password' docker run --net=host -e PGPASSWORD='password' --rm alpine/psql -h localhost -p 5433 -U postgres -d database -c "\d+"
+# Or use pg_dump if available in container
+```
+
+**Query Execution:**
+```bash
+PGPASSWORD='password' docker run --net=host -e PGPASSWORD='password' --rm alpine/psql -h localhost -p 5433 -U postgres -d database -c "YOUR_SQL_QUERY"
 ```
 
 ## Example psql Queries for Analysis
