@@ -74,6 +74,28 @@ If schema is not provided in CLAUDE.md or context:
 2. Read domain model files if available
 3. If nothing found, ask user ONCE for schema location, then proceed
 
+## Java/Spring Boot Context
+
+**This project uses JPA Criteria API with custom QueryService abstraction.**
+
+When optimizing queries:
+1. **Read the Java source file** that generates the query (e.g., `FeatureGetLocationsDistances.java`)
+2. **Understand the QueryService pattern:**
+   - `QueryService.Context<T, R>` provides `arrayAgg()`, `predicateBuilder()`, `orderBy2()`
+   - `SelectionWrapper<Output, ?>` maps JPA expressions to DTO setters
+   - `joinOn()` for custom joins with ON clause predicates
+   - PostgreSQL `array_agg()` for aggregating related data
+3. **Provide TWO deliverables:**
+   - **Optimized SQL** - The target query that should be generated
+   - **Java refactoring suggestions** - How to modify the Java code to generate the optimized SQL
+4. **Key optimization patterns for JPA:**
+   - Two-query pattern: First query fetches IDs (paginated), second fetches details for those IDs only
+   - Subqueries instead of LEFT JOIN + array_agg() for filters
+   - Predicates in `joinOn()` instead of WHERE clause when filtering aggregations
+   - CTE pattern may require native query instead of Criteria API
+
+**Important:** If the optimization requires patterns that JPA Criteria API can't express efficiently, recommend switching to native query with `@Query` annotation for this specific endpoint.
+
 ## Index Strategy
 
 Always provide:
